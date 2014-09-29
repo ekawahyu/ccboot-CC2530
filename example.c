@@ -66,10 +66,12 @@ void main (void)
     P1_0 = 1;
     P1_1 = 1;
     P1_4 = 1;
+    printf("Hello\n");
     clock_delay_usec(60000);
     P1_0 = 0;
     P1_1 = 0;
     P1_4 = 0;
+    printf("World\n");
     clock_delay_usec(60000);
   }
 }
