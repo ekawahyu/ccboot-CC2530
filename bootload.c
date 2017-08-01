@@ -41,19 +41,28 @@
 #include "clock.h"
 #include "uart.h"
 #include "flash.h"
+#include "radio.h"
 #include "bootload.h"
 
 /* string constants within code memory */
 
 __code const uint8_t txt_space[] = " ";
+__code const uint8_t txt_openbracket[] = "(";
+__code const uint8_t txt_closebracket[] = ")";
+__code const uint8_t txt_colon[] = ":";
 __code const uint8_t txt_press_button[] = "passkey to flash ";
 __code const uint8_t txt_running[] = "running...";
-__code const uint8_t txt_nodino[] = "CCBOOT v0.1 - CC253x";
+__code const uint8_t txt_ccboot[] = "CCBOOT v0.1 - CC253x";
 __code const uint8_t txt_xmodem[] = "- xmodem 115200 bps";
 __code const uint8_t txt_filetype[] = "- user program at 0x1000";
 __code const uint8_t txt_please_send[] = "please send a file (ENTER to cancel)... ";
 __code const uint8_t txt_rebooting[] = "rebooting...";
 __code const uint8_t txt_done[] = "done!";
+__code const uint8_t txt_remote[] = "waiting for remote flash...";
+__code const uint8_t txt_remote_client[] = "waiting for remote client...";
+__code const uint8_t txt_wait_file[] = "waiting for file...";
+__code const uint8_t txt_connected[] = "connected!";
+__code const uint8_t txt_noreply[] = "no reply!";
 
 /* define the passkey and the length here, please a unique passkey
  * starting with character other than '0-9', 'A-Z', or 'a-z' like '@'
@@ -61,16 +70,24 @@ __code const uint8_t txt_done[] = "done!";
 
 #define PASSKEY_LENGTH 5
 __code const uint8_t txt_passkey[] = "@boot";
+#define RFPASSKEY_LENGTH 7
+__code const uint8_t txt_rfpasskey[] = "@rfboot";
 
 /* allocates variables in the upper XDATA memory area, see Makefile */
 
 __xdata uint8_t flash_buffer[FLASH_PAGE_SIZE];
+__xdata uint8_t rf_data[RFDATA_SIZE];
 __xdata uint8_t xmodem_buffer[XMODEM_PAGE_SIZE];
 __xdata uint8_t * pxmodem_buffer;
 __xdata uint8_t * pflash_buffer;
 __xdata uint8_t flash_page_number;
+__xdata uint8_t flashing_mode;
 __xdata uint8_t passkey_index;
+__xdata uint8_t rfpasskey_index;
+__xdata uint8_t interceptpasskey_index;
 //__xdata uint8_t jmp_code[3];
+
+__xdata uint8_t *macp = &X_IEEE_ADDR;
 
 /* function prototypes */
 
@@ -92,13 +109,109 @@ void URX0_interceptor (void)
   int16_t serial_data;
 
   serial_data = U0DBUF;
-  if (serial_data == txt_passkey[passkey_index]) passkey_index++;
-  else passkey_index = 0;
+  if (serial_data == txt_passkey[passkey_index])
+    passkey_index++;
+  else
+    passkey_index = 0;
+  if (serial_data == txt_rfpasskey[rfpasskey_index])
+    rfpasskey_index++;
+  else
+    rfpasskey_index = 0;
 
   if (passkey_index == PASSKEY_LENGTH) {
     passkey_index = 0;
+    flashing_mode = LOCAL_FLASH;
     bootloader();
   }
+  if (rfpasskey_index == RFPASSKEY_LENGTH) {
+    rfpasskey_index = 0;
+    flashing_mode = WIRELESS_FLASH;
+    bootloader();
+  }
+}
+
+//---------------------------------------------------------------------------//
+//  RF_interceptor (void): radio packet listener/interceptor                 //
+//---------------------------------------------------------------------------//
+//    input:    none, it is called by interrupt vector                       //
+//    return:   if keypressed/passkey is matched, it invokes rfbootloader    //
+//                                                                           //
+//    this service routine listens/intercepts incoming radio packet. if a    //
+//    a key or a sequence of keys are matched, it gives a rfbootloader a     //
+//    full control over the cpu. the cpu handover to user application        //
+//    depends on bootloader decision.                                        //
+//---------------------------------------------------------------------------//
+
+void RF_interceptor(void) {
+  __xdata uint8_t * prf_data;
+  uint8_t length;
+  uint8_t i;
+
+  /* clear RF interrupt flag RFIF_0 and RFIF_1 */
+  S1CON &= ~0x03;
+
+  if (RFIRQF0 & FIFOP) {
+    /* put RX data in RX buffer for user program to access
+     * user program cannot get the data from RFD anymore
+     */
+    prf_data = rf_data;
+    length = RFD;
+    *prf_data++ = length;
+    for (i = 0; i < length; i++)
+    {
+      *prf_data = RFD;
+      if (*prf_data == txt_rfpasskey[interceptpasskey_index])
+        interceptpasskey_index++;
+      else
+        interceptpasskey_index = 0;
+
+      prf_data++;
+
+      if (interceptpasskey_index == RFPASSKEY_LENGTH)
+      {
+        interceptpasskey_index = 0;
+        flashing_mode = WIRELESS_FLASH;
+        rfbootloader();
+        return;
+      }
+    }
+
+    //RFST = ISFLUSHRX; //-----> this can be done here or in user program
+
+    /* clearing the FIFOP interrupt flag */
+    //RFIRQF0 &= ~FIFOP;     //-------> has to be done in user program
+  }
+}
+
+//---------------------------------------------------------------------------//
+//  RFERR_interceptor (void): radio state machine error listener/interceptor //
+//---------------------------------------------------------------------------//
+//    input:    none, it is called by interrupt vector                       //
+//    return:   none, only clearing interrupt flag and recover radio state   //
+//                                                                           //
+//    this service routine listens/intercepts incoming interrupt radio error.//
+//    user program may include this as well, however it is unnecessary. you  //
+//    could remove RFERR interceptor from the bootloader section only if you //
+//    upload user program for the very first time through serial port.       //
+//    otherwise the bootloader gets stuck without the error handler when the //
+//    user program is empty.
+//---------------------------------------------------------------------------//
+
+void RFERR_interceptor (void) {
+
+  // If RX overflow occurs, reset everything.
+   if(FSMSTAT0 == 17) {
+     RFST = ISRFOFF;
+     RFST = ISFLUSHRX;
+     RFST = ISFLUSHRX;
+     RFST = ISRXON;
+   }
+   else if(FSMSTAT0 == 56) {
+     RFST = ISFLUSHTX;
+   }
+
+   // clear RFERR interrupt flag
+   RFERRIF = 0;
 }
 
 //---------------------------------------------------------------------------//
@@ -118,28 +231,34 @@ void lnprint (uint8_t * ptext)
   } while (*ptext);
 }
 
-/*void printhex (uint8_t number)
+void print (uint8_t * ptext)
+{
+  do {
+    putchar(*ptext);
+    ptext++;
+  } while (*ptext);
+}
+
+void printhex (uint8_t number)
 {
   uint8_t high_number, low_number;
 
   high_number = (number & 0xF0) >> 4;
   low_number = number & 0x0F;
 
-  putchar('0'); putchar('x');
   if (high_number > 9) putchar(high_number + 55); else putchar(high_number + 48);
   if (low_number > 9) putchar(low_number + 55); else putchar(low_number + 48);
-  putchar(' ');
-}*/
+}
 
 //---------------------------------------------------------------------------//
-//  nodino_getchar (timeout): get one character from serial port             //
+//  ccboot_getchar (timeout): get one character from serial port             //
 //---------------------------------------------------------------------------//
 //    input:   timeout period                                                //
 //    return:  0-255 ascii received                                          //
 //    return:  -1 timeout detected                                           //
 //---------------------------------------------------------------------------//
 
-int16_t nodino_getchar (uint16_t timeout)
+int16_t ccboot_getchar (uint16_t timeout)
 {
   uint8_t serial_data;
 
@@ -173,11 +292,11 @@ int16_t xmodem_wait_for_sender(uint8_t timeout)
 
   /* sender waits for NACK (XMODEM) to start data transmission */
   do {
-    serial_data = nodino_getchar(60000);
+    serial_data = ccboot_getchar(60000);
   } while (serial_data == ERR_TIMEOUT_DETECTED && timeout--);
 
   putchar(XMODEM_NACK);
-  serial_data = nodino_getchar(60000);
+  serial_data = ccboot_getchar(60000);
 
   return serial_data;
 }
@@ -196,6 +315,21 @@ void flash_packets (void)
     flash_dma_write(flash_buffer, FLASH_PAGE_SIZE, flash_page_number << 11);
   }
   flash_page_number++;
+}
+
+//---------------------------------------------------------------------------//
+//  send_flash_buffer_over_radio (packet status)                             //
+//---------------------------------------------------------------------------//
+//    input:    status from xmodem packet getter                             //
+//    return:   straightly forward the status from xmodem packet getter      //
+//              1 sending successful                                         //
+//              0 end of sending                                             //
+//              -1 sending error                                             //
+//---------------------------------------------------------------------------//
+
+int16_t send_flash_buffer_over_radio(int16_t xmodem_get_packets)
+{
+  return 0;
 }
 
 //---------------------------------------------------------------------------//
@@ -218,7 +352,28 @@ void bootloader (void)
   EA = 0;     /* disable global interrupt */
 
   lnprint((uint8_t *) txt_space);
-  lnprint((uint8_t *) txt_nodino);
+  lnprint((uint8_t *) txt_ccboot);
+
+  macp += 7;
+  print((uint8_t *) txt_space);
+  print((uint8_t *) txt_openbracket);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_closebracket);
+
   lnprint((uint8_t *) txt_xmodem);
   lnprint((uint8_t *) txt_filetype);
   lnprint((uint8_t *) txt_space);
@@ -241,7 +396,7 @@ void bootloader (void)
 
     /* start receiving the rest of packets */
     do {
-      serial_data = nodino_getchar(60000);
+      serial_data = ccboot_getchar(60000);
 
       *pxmodem_buffer = (uint8_t)serial_data;
       pxmodem_buffer++;
@@ -296,6 +451,23 @@ void bootloader (void)
    */
 }
 
+//---------------------------------------------------------------------------//
+//  rfbootloader (void): rfbootloader program                                    //
+//---------------------------------------------------------------------------//
+//    input:    none, it gets called when a rfpasskey is received              //
+//    return:   jump to user program after flashing or canceled by           //
+//              rebooting the system                                         //
+//---------------------------------------------------------------------------//
+
+void rfbootloader(void)
+{
+
+}
+
+int8_t rfxmodem_handshake (void)
+{
+  return 0;
+}
 
 //---------------------------------------------------------------------------//
 //  main program                                                             //
@@ -322,7 +494,7 @@ void main (void)
   lnprint((uint8_t *) txt_press_button);
 
   do {
-    nodino_getchar(60000);
+    ccboot_getchar(60000);
     putchar('*');
     timeout--;
   } while (timeout);

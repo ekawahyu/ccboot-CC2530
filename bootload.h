@@ -62,26 +62,39 @@ extern "C" {
 #define INUM_RF    16
 #define INUM_WDT   17
 
-#define BOOTLOADER_TIMEOUT  10    /* min value is 1 = 0.1 sec */
-#define XMODEM_TIMEOUT      150   /* minimum value is 1 = 0.1 sec */
+#define BOOTLOADER_TIMEOUT    10    /* min value is 1 = 0.1 sec */
+#define XMODEM_TIMEOUT        150   /* minimum value is 1 = 0.1 sec */
 
-#define XMODEM_SOH          0x01
-#define XMODEM_EOT          0x04
-#define XMODEM_ACK          0x06
-#define XMODEM_NACK         0x15
-#define XMODEM_ETB          0x17
-#define XMODEM_CAN          0x18
-#define XMODEM_C            0x43
-#define XMODEM_BAUDRATE     BAUD115200
+#define XMODEM_SOH            0x01
+#define XMODEM_EOT            0x04
+#define XMODEM_ACK            0x06
+#define XMODEM_NACK           0x15
+#define XMODEM_ETB            0x17
+#define XMODEM_CAN            0x18
+#define XMODEM_C              0x43
+#define XMODEM_BAUDRATE       BAUD115200
 
 #define XMODEM_PAGE_SIZE      132
 #define XMODEM_PAYLOAD_SIZE   128
 
 #define USER_PROGRAM_PAGE     2
 
+#define RFDATA_SIZE           128
+#define RADIO_FRAME_SIZE      64    // < 114 bytes 802.15.4 DATA FRAME TYPE
+
+#define LOCAL_FLASH           0
+#define WIRELESS_FLASH        1
+
 extern __xdata uint8_t flash_page_number;
 
-void bootloader (void);
+void URX0_interceptor(void);
+void RF_interceptor(void);
+void RFERR_interceptor(void);
+void bootloader(void);
+void rfbootloader(void);
+int8_t rfxmodem_handshake (void);
+
+void lnprint (uint8_t * ptext);
 
 #ifdef __cplusplus
 }
