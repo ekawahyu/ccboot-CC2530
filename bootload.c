@@ -46,9 +46,12 @@
 /* string constants within code memory */
 
 __code const uint8_t txt_space[] = " ";
+__code const uint8_t txt_openbracket[] = "(";
+__code const uint8_t txt_closebracket[] = ")";
+__code const uint8_t txt_colon[] = ":";
 __code const uint8_t txt_press_button[] = "passkey to flash ";
 __code const uint8_t txt_running[] = "running...";
-__code const uint8_t txt_nodino[] = "CCBOOT v0.1 - CC253x";
+__code const uint8_t txt_ccboot[] = "CCBOOT v0.1 - CC253x";
 __code const uint8_t txt_xmodem[] = "- xmodem 115200 bps";
 __code const uint8_t txt_filetype[] = "- user program at 0x1000";
 __code const uint8_t txt_please_send[] = "please send a file (ENTER to cancel)... ";
@@ -71,6 +74,8 @@ __xdata uint8_t * pflash_buffer;
 __xdata uint8_t flash_page_number;
 __xdata uint8_t passkey_index;
 //__xdata uint8_t jmp_code[3];
+
+__xdata uint8_t *macp = &X_IEEE_ADDR;
 
 /* function prototypes */
 
@@ -118,28 +123,34 @@ void lnprint (uint8_t * ptext)
   } while (*ptext);
 }
 
-/*void printhex (uint8_t number)
+void print (uint8_t * ptext)
+{
+  do {
+    putchar(*ptext);
+    ptext++;
+  } while (*ptext);
+}
+
+void printhex (uint8_t number)
 {
   uint8_t high_number, low_number;
 
   high_number = (number & 0xF0) >> 4;
   low_number = number & 0x0F;
 
-  putchar('0'); putchar('x');
   if (high_number > 9) putchar(high_number + 55); else putchar(high_number + 48);
   if (low_number > 9) putchar(low_number + 55); else putchar(low_number + 48);
-  putchar(' ');
-}*/
+}
 
 //---------------------------------------------------------------------------//
-//  nodino_getchar (timeout): get one character from serial port             //
+//  ccboot_getchar (timeout): get one character from serial port             //
 //---------------------------------------------------------------------------//
 //    input:   timeout period                                                //
 //    return:  0-255 ascii received                                          //
 //    return:  -1 timeout detected                                           //
 //---------------------------------------------------------------------------//
 
-int16_t nodino_getchar (uint16_t timeout)
+int16_t ccboot_getchar (uint16_t timeout)
 {
   uint8_t serial_data;
 
@@ -173,11 +184,11 @@ int16_t xmodem_wait_for_sender(uint8_t timeout)
 
   /* sender waits for NACK (XMODEM) to start data transmission */
   do {
-    serial_data = nodino_getchar(60000);
+    serial_data = ccboot_getchar(60000);
   } while (serial_data == ERR_TIMEOUT_DETECTED && timeout--);
 
   putchar(XMODEM_NACK);
-  serial_data = nodino_getchar(60000);
+  serial_data = ccboot_getchar(60000);
 
   return serial_data;
 }
@@ -218,7 +229,28 @@ void bootloader (void)
   EA = 0;     /* disable global interrupt */
 
   lnprint((uint8_t *) txt_space);
-  lnprint((uint8_t *) txt_nodino);
+  lnprint((uint8_t *) txt_ccboot);
+
+  macp += 7;
+  print((uint8_t *) txt_space);
+  print((uint8_t *) txt_openbracket);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_colon);
+  printhex(*macp--);
+  print((uint8_t *) txt_closebracket);
+
   lnprint((uint8_t *) txt_xmodem);
   lnprint((uint8_t *) txt_filetype);
   lnprint((uint8_t *) txt_space);
@@ -241,7 +273,7 @@ void bootloader (void)
 
     /* start receiving the rest of packets */
     do {
-      serial_data = nodino_getchar(60000);
+      serial_data = ccboot_getchar(60000);
 
       *pxmodem_buffer = (uint8_t)serial_data;
       pxmodem_buffer++;
@@ -322,7 +354,7 @@ void main (void)
   lnprint((uint8_t *) txt_press_button);
 
   do {
-    nodino_getchar(60000);
+    ccboot_getchar(60000);
     putchar('*');
     timeout--;
   } while (timeout);
